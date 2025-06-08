@@ -1,0 +1,37 @@
+import { Home, Leaf, CalendarCheck, Settings } from 'lucide-react';
+import Link from 'next/link';
+
+
+const navItems = [
+  { label: 'Dashboard', icon: <Home className="w-5 h-5" />, href: '/' },
+  { label: 'My Plants', icon: <Leaf className="w-5 h-5" />, href: '/plants' },
+  { label: 'Reminders', icon: <CalendarCheck className="w-5 h-5" />, href: '/reminders' },
+  { label: 'Settings', icon: <Settings className="w-5 h-5" />, href: '/settings' },
+];
+
+export default function SideNav() {
+  return (
+    <aside className="h-screen w-64 bg-lime-100/40 border-r border-amber-600/20 flex flex-col justify-between">
+      <div>
+        <div className="p-6 text-2xl font-light text-amber-700 tracking-widest border-b border-amber-600/10">
+          植物
+        </div>
+
+        <nav className="mt-6">
+          {navItems.map((item) => (
+            <Link href={item.href} key={item.label}>
+              <div className="flex items-center px-6 py-3 text-amber-700 hover:bg-lime-200/30 transition-colors cursor-pointer">
+                {item.icon}
+                <span className="ml-3 text-sm font-medium">{item.label}</span>
+              </div>
+            </Link>
+          ))}
+        </nav>
+      </div>
+
+      <div className="p-6 text-xs text-amber-600/50">
+        © {new Date().getFullYear()} Viggs.dev
+      </div>
+    </aside>
+  );
+}
