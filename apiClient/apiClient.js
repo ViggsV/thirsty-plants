@@ -1,37 +1,38 @@
 import axios from "axios";
-const url = "http://localhost:3001/";
 
 export class ApiClient {
   constructor() {
-    // Initialize axios with default headers
     this.axiosInstance = axios.create({
-      headers: {
-        'Authorization': `Bearer ${this.getToken()}`
-      }
+      baseURL: "http://localhost:3001", // 👉 server base
+      withCredentials: true,             // 👉 send & receive cookies
     });
 
-    // Add request interceptor to ensure token is set for every request
-    this.axiosInstance.interceptors.request.use(
-      (config) => {
-        const token = this.getToken();
-        if (token) {
-          config.headers['Authorization'] = `Bearer ${token}`;
-        }
-        return config;
-      },
-      (error) => {
-        return Promise.reject(error);
-      }
-    );
+    
 
-    // Add response interceptor to handle auth errors
+    // Attach access token to every request
+    this.axiosInstance.interceptors.request.use((config) => {
+      const token = this.getToken();
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    });
+
+    // If 401, try refreshing once
     this.axiosInstance.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        if (error.response && error.response.status === 401) {
-          this.removeToken();
-          if (typeof window !== 'undefined') {
-            window.location.href = '/unauthorized';
+      (res) => res,
+      async (error) => {
+        const original = error.config;
+        if (
+          error.response?.status === 401 &&
+          !original._retry
+        ) {
+          original._retry = true;
+          const newToken = await this.refreshAccessToken();
+          if (newToken) {
+            this.setToken(newToken);
+            original.headers.Authorization = `Bearer ${newToken}`;
+            return this.axiosInstance(original);
           }
         }
         return Promise.reject(error);
@@ -39,107 +40,108 @@ export class ApiClient {
     );
   }
 
+  // 🔑 Check if token is present
+  isLoggedIn() {
+    return !!this.getToken();
+  }
+
   getToken() {
-    if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('authToken');
-      return token;
-    }
-    return null;
+    return typeof window !== "undefined"
+      ? localStorage.getItem("authToken")
+      : null;
   }
 
   setToken(token) {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('authToken', token);
-      // Update axios default headers
-      this.axiosInstance.defaults.headers['Authorization'] = `Bearer ${token}`;
+    if (typeof window !== "undefined") {
+      localStorage.setItem("authToken", token);
     }
   }
 
   removeToken() {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('authToken');
-      delete this.axiosInstance.defaults.headers['Authorization'];
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("authToken");
     }
   }
 
-  isLoggedIn() {
-    const isLoggedIn = !!this.getToken();
-    return isLoggedIn;
-  }
-
-  async apiCall(method, url, data) {
+  async refreshAccessToken() {
     try {
-      const response = await this.axiosInstance({
-        method,
-        url,
-        data,
-      });
-      return response;
-    } catch (error) {
-      console.error('API call error:', error.response || error); // Debug log
-      if (error.response && error.response.status === 401) {
-        this.removeToken();
-        if (typeof window !== 'undefined') {
-          window.location.href = '/unauthorized';
-        }
-      }
-      throw error;
+      const { data } = await this.axiosInstance.post("auth/refreshToken");
+      return data.accessToken; 
+    } catch {
+      return null;
     }
   }
 
-  async getAds() {
-    try {
-      const response = await this.apiCall("get", url + "ads");
-      return response;
-    } catch (error) {
-      throw error;
+  // Generic API call (paths are relative)
+  async apiCall(method, path, data) {
+    return this.axiosInstance({ method, url: path, data });
+  }
+
+  // Domain methods
+  getPlants() {
+    return this.apiCall("get", "api/plants");
+  }
+
+  addPlant(title, desc, freq) {
+    const wateringFrequency = Number(freq);
+    if (isNaN(wateringFrequency)) {
+      return Promise.reject(
+        new Error("Watering frequency must be a valid number")
+      );
     }
+    return this.apiCall("post", "api/plants", {
+      title,
+      description: desc,
+      wateringFrequency,
+    });
   }
 
-  async addAd(title, description, price) {
-    try {
-      const numericPrice = Number(price);
-      if (isNaN(numericPrice)) {
-        throw new Error('Price must be a valid number');
-      }
-      return this.apiCall("post", url + "ads", { 
-        title, 
-        description, 
-        price: numericPrice 
-      });
-    } catch (error) {
-      console.error('addAd error:', error.response || error); // Debug log
-      throw error;
+  removePlant(id) {
+    return this.apiCall("delete", `api/plants/${id}`);
+  }
+
+  updatePlants(id, title, desc, freq) {
+    return this.apiCall("put", `api/plants/${id}`, {
+      title,
+      description: desc,
+      wateringFrequency: freq,
+    });
+  }
+
+  // Auth
+async login(email, password) {
+  try {
+    const response = await this.axiosInstance.post("api/auth/login", { email, password });
+    console.log("Login response data:", response.data);
+    const { accessToken } = response.data;
+    if (accessToken) {
+      this.setToken(accessToken);
+      return response.data;
     }
+    throw new Error("No accessToken in response");
+  } catch (err) {
+    console.error("Login failed:", err.response?.data || err);
+    throw err;
   }
+}
 
-  async removeAd(id) {
-    return this.apiCall("delete", `${url}ads/${id}`);
-  }
 
-  async updateAd(id, title, description, price) {
-    return this.apiCall("put", `${url}ads/${id}`, { title, description, price });
-  }
-
-  async login(email, password) {
-    try {
-      const response = await this.apiCall("post", url + "auth/login", { email, password });
-      
-      if (response.data && response.data.token) {
-        this.setToken(response.data.token);
-        return response;
-      } else {
-        throw new Error('No token received from server');
-      }
-    } catch (error) {
-      throw error;
+  async register(email, password) {
+    const { data } = await this.axiosInstance.post("api/auth/register", {
+      email,
+      password,
+    });
+    if (data.accessToken) {
+      this.setToken(data.accessToken);
+      return data;
     }
+    throw new Error("No access token received");
   }
 
   logout() {
     this.removeToken();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/user';
+    if (typeof window !== "undefined") {
+      window.location.href = "/user";
     }
   }
 }
